@@ -68,6 +68,9 @@ def parse_tinfoil_response(json_data: dict) -> list[TinfoilEntry]:
         else:
             name = name_html
         
+        import html
+        name = html.unescape(name)
+        
         if title_id and len(title_id) == 16:
             entries.append(TinfoilEntry(title_id=title_id.upper(), name=name))
     
