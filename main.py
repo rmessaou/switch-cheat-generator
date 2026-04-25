@@ -62,6 +62,15 @@ def extract_game_name_from_path(path: Path) -> tuple[str | None, str | None]:
     name = name.replace("_", " ").replace("-", " ")
     name = re.sub(r"\s+", " ", name).strip()
     
+    name = re.sub(r"\s+v\d+.*$", "", name, flags=re.IGNORECASE)
+    
+    common_suffixes = [" switch", " nsp", " xci", " nsx"]
+    for suffix in common_suffixes:
+        if name.lower().endswith(suffix):
+            name = name[:-len(suffix)].strip()
+    
+    name = re.sub(r"\s+", " ", name).strip()
+    
     if name and len(name) > 2:
         return None, name
     return None, None
