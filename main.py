@@ -33,6 +33,16 @@ def load_offline_games() -> list[dict]:
 
 def extract_game_name_from_path(path: Path) -> str | None:
     name = path.stem
+    
+    junk_suffixes = [
+        " [XCI]", " [NSZ]", " [NSP]", " [NRO]", " [NSZ]", " [XCZ]",
+        " (Base)", " (Update)", " (DLC)", " ( DLC)",
+    ]
+    for suffix in junk_suffixes:
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+    
+    name = re.sub(r" v\d+\.\d+.*$", "", name)
     name = name.replace("_", " ").replace("-", " ").strip()
     name = re.sub(r"\s+", " ", name).strip()
     if name and len(name) > 2:
