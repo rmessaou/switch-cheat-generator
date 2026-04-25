@@ -12,6 +12,33 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).parent.resolve()
+DATA_DIR = SCRIPT_DIR.parent / "data"
+GAMES_JSON = DATA_DIR / "games.json"
+
+SWITCHBREW_URL = "https://switchbrew.org/w/index.php?title=Title_list/Games&mobileaction=toggle_view_desktop"
+CACHE_FILE = DATA_DIR / ".switchbrew_title_cache.json"
+CACHE_MAX_AGE_DAYS = 7
+
+tinfoil_search = None
+
+
+def _import_tinfoil():
+    global tinfoil_search
+    if tinfoil_search is not None:
+        return
+    
+    tinfoil_path = SCRIPT_DIR / "tinfoil_search.py"
+    if not tinfoil_path.exists():
+        tinfoil_path = SCRIPT_DIR.parent / "scripts" / "tinfoil_search.py"
+    
+    if tinfoil_path.exists():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tinfoil_search", tinfoil_path)
+        if spec and spec.loader:
+            tinfoil_search = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(tinfoil_search)
+
 
 SWITCHBREW_URL = "https://switchbrew.org/w/index.php?title=Title_list/Games&mobileaction=toggle_view_desktop"
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -189,7 +216,12 @@ def progressive_search(query: str, limit: int = 10) -> tuple[dict | None, list[d
 
 def find_title_id(game_name: str, offline_only: bool = False) -> tuple[str | None, str | None]:
     """
-    Find title ID for a game name. Returns (title_id, game_name).
+    Find title ID for a game name.
+    1. Try exact offline match
+    2. Try progressive offline search  
+    3. If not offline_only, try tinfoil online
+    
+    Returns (title_id, game_name).
     """
     offline_results = search_offline_games(game_name, limit=1)
     if offline_results:
@@ -201,7 +233,135 @@ def find_title_id(game_name: str, offline_only: bool = False) -> tuple[str | Non
             return result[0]["title_id"], result[0]["name"]
         return None, None
 
+    result = progressive_search(game_name)
+    if result[0]:
+        return result[0]["title_id"], result[0]["name"]
+
+    _import_tinfoil()
+    if tinfoil_search is None:
+        return None, None
+    
+    entries = tinfoil_search.search_tinfoil(game_name, limit=5)
+    if entries:
+        return entries[0].title_id, entries[0].name
+    
+    words = game_name.split()
+    if len(words) > 1:
+        short_query = " ".join(words[:-1])
+        entries = tinfoil_search.search_tinfoil(short_query, limit=3)
+        if entries:
+            return entries[0].title_id, entries[0].name
+
     return None, None
+
+
+def search_with_confirmation(query: str) -> tuple[str | None, str | None]:
+    """
+    Interactive search that prompts user to confirm.
+    
+    1. Try exact offline match
+    2. Try progressive offline (shorter queries)
+    3. Try tinfoil online + progressive
+    
+    Returns (title_id, game_name) after user confirms, or (None, None) if cancelled.
+    """
+    results = search_offline_games(query, limit=5)
+    if results:
+        print(f"\nOffline matches for '{query}':")
+        for i, r in enumerate(results, 1):
+            print(f"  [{i}] {r['name']} [{r['title_id']}]")
+        
+        chosen = _prompt_choice(results, allow_online=False)
+        if chosen:
+            return chosen["title_id"], chosen["name"]
+    
+    result = progressive_search(query)
+    if result[0]:
+        print(f"\nProgressive offline: {result[0]['name']} [{result[0]['title_id']}]")
+        if input("Use this? [y/n]: ").strip().lower() == "y":
+            return result[0]["title_id"], result[0]["name"]
+    
+    _import_tinfoil()
+    if tinfoil_search:
+        entries = tinfoil_search.search_tinfoil(query, limit=5)
+        if entries:
+            print(f"\nOnline (tinfoil) matches:")
+            for i, e in enumerate(entries, 1):
+                print(f"  [{i}] {e.name} [{e.title_id}]")
+            
+            chosen = _prompt_choice_tinfoil(entries)
+            if chosen:
+                return chosen.title_id, chosen.name
+        
+        words = query.split()
+        for i in range(len(words), 0, -1):
+            short_query = " ".join(words[:i])
+            if not short_query:
+                continue
+            entries = tinfoil_search.search_tinfoil(short_query, limit=3)
+            if entries:
+                print(f"\nOnline progressive '{short_query}':")
+                for i, e in enumerate(entries, 1):
+                    print(f"  [{i}] {e.name} [{e.title_id}]")
+                chosen = _prompt_choice_tinfoil(entries)
+                if chosen:
+                    return chosen.title_id, chosen.name
+                break
+    
+    return None, None
+
+
+def _prompt_choice(results: list[dict], allow_online: bool = True) -> dict | None:
+    if not results:
+        return None
+    if len(results) == 1:
+        print(f"Using: {results[0]['name']} [{results[0]['title_id']}]")
+        if input("Confirm? [y/n]: ").strip().lower() == "y":
+            return results[0]
+        return None
+    
+    print("[q] quit")
+    if allow_online:
+        print("[o] search online")
+    
+    while True:
+        resp = input("Select: ").strip().lower()
+        if resp == "q":
+            return None
+        if allow_online and resp == "o":
+            return None
+        try:
+            idx = int(resp) - 1
+            if 0 <= idx < len(results):
+                return results[idx]
+        except ValueError:
+            pass
+
+
+def _prompt_choice_tinfoil(entries):
+    if not entries:
+        return None
+    if len(entries) == 1:
+        print(f"Using: {entries[0].name} [{entries[0].title_id}]")
+        if input("Confirm? [y/n]: ").strip().lower() == "y":
+            return entries[0]
+        return None
+    
+    print("[q] quit")
+    print("[s] skip online search")
+    
+    while True:
+        resp = input("Select: ").strip().lower()
+        if resp == "q" or resp == "s":
+            return None
+        try:
+            idx = int(resp) - 1
+            if 0 <= idx < len(entries):
+                return entries[idx]
+        except ValueError:
+            pass
+    
+    return None
 
 
 def normalize_for_match(value: str) -> str:
