@@ -106,4 +106,5 @@ Search order:
 
 - Folder names sanitized for Windows
 - When no cheats exist, check manually at https://tinfoil.io/Title/<TITLE_ID>
+- "skip (no cheats)" means no cheats are available on tinfoil.io for that game
 - ROM naming tips: include Title ID in brackets `[0100...]` for automatic detection
