@@ -119,6 +119,91 @@ def fetch_entries() -> list[GameEntry]:
     return entries
 
 
+def load_offline_games() -> list[dict]:
+    if not GAMES_JSON.exists():
+        return []
+    try:
+        return json.loads(GAMES_JSON.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def search_offline_games(query: str, limit: int = 10) -> list[dict]:
+    games = load_offline_games()
+    if not games:
+        return []
+    
+    query_norm = re.sub(r"[^a-z0-9]", "", query.lower())
+
+    def score(game_name: str) -> int:
+        name_norm = re.sub(r"[^a-z0-9]", "", game_name.lower())
+        if query_norm == name_norm:
+            return 1000
+        if name_norm.startswith(query_norm):
+            return 800 + (len(name_norm) - len(query_norm))
+        if query_norm in name_norm:
+            return 600 + (len(name_norm) - len(query_norm))
+        chars = list(query_norm)
+        score_val = 0
+        for ch in name_norm:
+            if chars and ch == chars[0]:
+                score_val += 1
+                chars.pop(0)
+        if chars:
+            return 0
+        return max(0, score_val - abs(len(name_norm) - len(query_norm)))
+
+    scored = [(score(g["name"]), g) for g in games if score(g["name"]) > 0]
+    scored.sort(key=lambda x: (-x[0], x[1]["name"]))
+    return [g for _, g in scored[:limit]]
+
+
+def progressive_search(query: str, limit: int = 10) -> tuple[dict | None, list[dict]]:
+    """
+    If exact match fails, progressively shorten query by removing words.
+    Returns: (best_match, other_suggestions)
+    """
+    words = query.split()
+    if len(words) <= 1:
+        return None, []
+    
+    checked: set[str] = set()
+    suggestions: list[dict] = []
+    
+    for i in range(len(words), 0, -1):
+        short_query = " ".join(words[:i])
+        if not short_query or short_query in checked:
+            continue
+        checked.add(short_query)
+        
+        results = search_offline_games(short_query, limit=3)
+        for r in results:
+            if r["name"] not in [s["name"] for s in suggestions]:
+                suggestions.append(r)
+        
+        if suggestions:
+            break
+    
+    return suggestions[0] if suggestions else None, suggestions[1:]
+
+
+def find_title_id(game_name: str, offline_only: bool = False) -> tuple[str | None, str | None]:
+    """
+    Find title ID for a game name. Returns (title_id, game_name).
+    """
+    offline_results = search_offline_games(game_name, limit=1)
+    if offline_results:
+        return offline_results[0]["title_id"], offline_results[0]["name"]
+    
+    if offline_only:
+        result = progressive_search(game_name)
+        if result[0]:
+            return result[0]["title_id"], result[0]["name"]
+        return None, None
+
+    return None, None
+
+
 def normalize_for_match(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value.lower())
 

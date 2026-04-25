@@ -11,53 +11,19 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from scripts.search import (
+    find_title_id,
+    progressive_search,
+    search_offline_games,
+)
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 GAMES_JSON = SCRIPT_DIR / "data" / "games.json"
-SEARCH_SCRIPT = SCRIPT_DIR / "scripts" / "search.py"
 GENERATOR_SCRIPT = SCRIPT_DIR / "scripts" / "generator.py"
 
 
 def is_title_id(value: str) -> bool:
     return bool(re.fullmatch(r"[0-9A-Fa-f]{16}", value.strip()))
-
-
-def load_offline_games() -> list[dict]:
-    if not GAMES_JSON.exists():
-        return []
-    try:
-        return json.loads(GAMES_JSON.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-
-
-def progressive_search(query: str, limit: int = 10) -> tuple[dict | None, list[dict]]:
-    """
-    If exact match fails, progressively shorten query by removing words.
-    Returns: (best_match, other_suggestions)
-    """
-    words = query.split()
-    if len(words) <= 1:
-        return None, []
-    
-    checked: set[str] = set()
-    suggestions: list[dict] = []
-    
-    for i in range(len(words), 0, -1):
-        short_query = " ".join(words[:i])
-        if not short_query or short_query in checked:
-            continue
-        checked.add(short_query)
-        
-        results = search_offline_games(short_query, limit=3)
-        for r in results:
-            if r["name"] not in [s["name"] for s in suggestions]:
-                suggestions.append(r)
-        
-        if suggestions:
-            break
-    
-    return suggestions[0] if suggestions else None, suggestions[1:]
 
 
 def extract_game_name_from_path(path: Path) -> tuple[str | None, str | None]:
@@ -124,30 +90,6 @@ def scan_roms_folder(folder_path: str) -> list[tuple[str | None, str]]:
     return games
 
 
-def find_title_id_for_game(game_name: str, offline_only: bool = False) -> tuple[str | None, str | None]:
-    offline_results = search_offline_games(game_name, limit=1)
-    if offline_results:
-        return offline_results[0]["title_id"], offline_results[0]["name"]
-    
-    if offline_only:
-        result = progressive_search(game_name)
-        if result[0]:
-            print(f"  Warning: using closest match: {result[0]['name']}")
-            return result[0]["title_id"], result[0]["name"]
-        return None, None
-
-    found_id = online_search(game_name)
-    if found_id:
-        return found_id, game_name
-
-    result = progressive_search(game_name)
-    if result[0]:
-        print(f"  Warning: using closest match: {result[0]['name']}")
-        return result[0]["title_id"], result[0]["name"]
-
-    return None, None
-
-
 def process_games_folder(
     folder_path: str,
     output_dir: str,
@@ -162,15 +104,17 @@ def process_games_folder(
 
     print(f"Found {len(games)} items. Searching and generating...")
 
-    success: list[tuple[str, str, str]] = []  # (title_id, game_name, output_folder)
-    skipped: list[tuple[str, str]] = []  # (game_name, reason)
+    success: list[tuple[str, str, str]] = []
+    skipped: list[tuple[str, str]] = []
 
     for i, (title_id, name) in enumerate(games, 1):
         print(f"[{i}/{len(games)}] {name} ...", end=" ", flush=True)
 
         if not title_id:
-            result = find_title_id_for_game(name, offline_only)
-            title_id, found_name = result[0], result[1]
+            result = find_title_id(name, offline_only)
+            title_id = result[0]
+            if title_id:
+                print(f"  (using: {result[1]})")
 
         if not title_id:
             print(f"skip (not found)")
@@ -200,35 +144,17 @@ def process_games_folder(
     return success, skipped
 
 
-def search_offline_games(query: str, limit: int = 10) -> list[dict]:
-    games = load_offline_games()
-    return search_offline_games_with_list(games, query, limit)
+def run_generator(title_id: str, output_dir: str, extended: bool = False) -> int:
+    if not GENERATOR_SCRIPT.exists():
+        print("error: generator.py not found", file=sys.stderr)
+        return 1
 
+    args = [sys.executable, str(GENERATOR_SCRIPT), title_id, "-o", output_dir]
+    if extended:
+        args.append("--extended")
 
-def search_offline_games_with_list(games: list[dict], query: str, limit: int = 10) -> list[dict]:
-    query_norm = re.sub(r"[^a-z0-9]", "", query.lower())
-
-    def score(game_name: str) -> int:
-        name_norm = re.sub(r"[^a-z0-9]", "", game_name.lower())
-        if query_norm == name_norm:
-            return 1000
-        if name_norm.startswith(query_norm):
-            return 800 + (len(name_norm) - len(query_norm))
-        if query_norm in name_norm:
-            return 600 + (len(name_norm) - len(query_norm))
-        chars = list(query_norm)
-        score_val = 0
-        for ch in name_norm:
-            if chars and ch == chars[0]:
-                score_val += 1
-                chars.pop(0)
-        if chars:
-            return 0
-        return max(0, score_val - abs(len(name_norm) - len(query_norm)))
-
-    scored = [(score(g["name"]), g) for g in games if score(g["name"]) > 0]
-    scored.sort(key=lambda x: (-x[0], x[1]["name"]))
-    return [g for _, g in scored[:limit]]
+    result = subprocess.run(args, cwd=SCRIPT_DIR)
+    return result.returncode
 
 
 def prompt_offline_choice(games: list[dict]) -> dict | None:
@@ -242,14 +168,11 @@ def prompt_offline_choice(games: list[dict]) -> dict | None:
     for i, g in enumerate(games, 1):
         versions_note = f" ({g['version_count']} versions)" if g.get("version_count", 1) > 1 else ""
         print(f"  [{i}] {g['name']}{versions_note} [{g['title_id']}]")
-    print("  [o] search online instead")
     print("  [q] quit")
 
     while True:
         resp = input("\nSelect a number: ").strip().lower()
         if resp == "q":
-            return None
-        if resp == "o":
             return None
         try:
             idx = int(resp) - 1
@@ -257,7 +180,10 @@ def prompt_offline_choice(games: list[dict]) -> dict | None:
                 return games[idx]
         except ValueError:
             pass
-        print("Please enter a number, 'o', or 'q'.")
+        print("Please enter a number or 'q'.")
+
+
+SEARCH_SCRIPT = SCRIPT_DIR / "scripts" / "search.py"
 
 
 def online_search(query: str) -> str | None:
@@ -285,19 +211,6 @@ def online_search(query: str) -> str | None:
         print(f"Online search failed: {exc}", file=sys.stderr)
 
     return None
-
-
-def run_generator(title_id: str, output_dir: str, extended: bool = False) -> int:
-    if not GENERATOR_SCRIPT.exists():
-        print("error: generator.py not found", file=sys.stderr)
-        return 1
-
-    args = [sys.executable, str(GENERATOR_SCRIPT), title_id, "-o", output_dir]
-    if extended:
-        args.append("--extended")
-
-    result = subprocess.run(args, cwd=SCRIPT_DIR)
-    return result.returncode
 
 
 def build_parser() -> argparse.ArgumentParser:
