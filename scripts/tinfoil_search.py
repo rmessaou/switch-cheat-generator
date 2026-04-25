@@ -92,12 +92,20 @@ def fetch_tinfoil_search(query: str, limit: int = 10) -> list[TinfoilEntry]:
     
     def score(name: str) -> int:
         name_lower = name.lower()
+        query_words = query_norm.split()
+        name_words = name_lower.split()
+        
         if query_norm == name_lower:
             return 1000
         if name_lower.startswith(query_norm):
             return 800 + (len(name_lower) - len(query_norm))
         if query_norm in name_lower:
-            return 600 + (len(name_lower) - len(query_norm))
+            return 700 + (len(name_lower) - len(query_norm))
+        
+        word_matches = sum(1 for qw in query_words if qw in name_lower)
+        if word_matches > 0:
+            return 400 + word_matches * 50 - abs(len(name_words) - len(query_words))
+        
         return 0
     
     scored = [(score(e.name), e) for e in entries if score(e.name) > 0]

@@ -248,11 +248,12 @@ def find_title_id(game_name: str, offline_only: bool = False) -> tuple[str | Non
         return entries[0].title_id, entries[0].name
     
     words = game_name.split()
-    if len(words) > 1:
-        short_query = " ".join(words[:-1])
-        entries = tinfoil_search.search_tinfoil(short_query, limit=3)
-        if entries:
-            return entries[0].title_id, entries[0].name
+    for i in range(1, len(words)):
+        short_query = " ".join(words[:i])
+        if short_query:
+            entries = tinfoil_search.search_tinfoil(short_query, limit=3)
+            if entries:
+                return entries[0].title_id, entries[0].name
 
     return None, None
 
