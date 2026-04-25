@@ -33,8 +33,6 @@ def load_offline_games() -> list[dict]:
 
 def extract_game_name_from_path(path: Path) -> str | None:
     name = path.stem
-    name = re.sub(r"\s*\(\d+)\s*$", "", name)
-    name = re.sub(r"\s*\[\w-]+\s*$", "", name)
     name = name.replace("_", " ").replace("-", " ").strip()
     name = re.sub(r"\s+", " ", name).strip()
     if name and len(name) > 2:
@@ -103,18 +101,25 @@ def process_games_folder(
             skipped.append((name, "not found"))
             continue
 
+        cmd = [sys.executable, str(GENERATOR_SCRIPT), title_id, "-o", output_dir]
+        if extended:
+            cmd.append("-e")
         result = subprocess.run(
-            [sys.executable, str(GENERATOR_SCRIPT), title_id, "-o", output_dir, "-e" if extended else ""],
+            cmd,
             cwd=SCRIPT_DIR,
             capture_output=True,
         )
 
-        if result.returncode == 0 and "Files written:" in result.stdout.decode():
-            print(f"OK ({title_id})")
-            success.append((title_id, found_name or name, output_dir))
-        else:
-            print(f"skip (no cheats)")
-            skipped.append((name, "no cheats"))
+        if result.returncode == 0:
+            output = result.stdout.decode() if isinstance(result.stdout, bytes) else result.stdout
+            if "Files written:" in output:
+                count_line = [l for l in output.splitlines() if "Files written:" in l]
+                if count_line and not count_line[0].startswith("Files written: 0"):
+                    print(f"OK ({title_id})")
+                    success.append((title_id, found_name or name, output_dir))
+                    continue
+        print(f"skip (no cheats)")
+        skipped.append((name, "no cheats" if result.returncode != 0 else "failed"))
 
     return success, skipped
 
