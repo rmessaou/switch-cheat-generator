@@ -31,10 +31,11 @@ python3 main.py <input> [options]
 
 # Search options:
   --offline-only        Only search offline database, skip online
-  -s, --search       Search only, don't generate cheats
+  -s, --search         Search only, don't generate cheats
+  -a, --auto           Auto-select best match (no prompts)
 
 # Generator options:
-  -e, --extended     Fill missing build versions
+  -e, --extended       Fill missing build versions
 
 # Batch options:
   --games-folder DIR   Process all ROMs in folder
@@ -46,14 +47,17 @@ python3 main.py <input> [options]
 # Generate cheats by title ID
 python3 main.py 0100152000022000
 
-# Search by name
+# Search by name (prompts for confirmation)
 python3 main.py "Mario Kart"
 
-# Search only (find title ID)
-python3 main.py "Mario Kart" -s
+# Search by name (auto-select best match)
+python3 main.py "Mario Kart" -a
 
-# Batch process ROMs folder
+# Batch process ROMs folder (prompts for each ambiguous match)
 python3 main.py --games-folder ROMs -o my_cheats
+
+# Batch process ROMs folder (auto-select best, no prompts)
+python3 main.py --games-folder ROMs -o my_cheats -a
 
 # Extended mode (fill all builds)
 python3 main.py 0100152000022000 -e

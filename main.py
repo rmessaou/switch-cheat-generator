@@ -13,7 +13,6 @@ from pathlib import Path
 
 from scripts.search import (
     find_title_id,
-    progressive_search,
     search_offline_games,
 )
 
@@ -95,6 +94,7 @@ def process_games_folder(
     output_dir: str,
     extended: bool,
     offline_only: bool = False,
+    auto: bool = False,
 ) -> tuple[list[tuple[str, str, str]], list[tuple[str, str]]]:
     print(f"Scanning folder: {folder_path}")
     games = scan_roms_folder(folder_path)
@@ -111,7 +111,7 @@ def process_games_folder(
         print(f"[{i}/{len(games)}] {name} ...", end=" ", flush=True)
 
         if not title_id:
-            result = find_title_id(name, offline_only)
+            result = find_title_id(name, offline_only, auto)
             title_id = result[0]
             if title_id:
                 print(f"  (using: {result[1]})")
@@ -243,6 +243,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only search and display title ID without generating cheats.",
     )
     parser.add_argument(
+        "-a", "--auto",
+        action="store_true",
+        help="Auto-select best match without prompting (for batch scripts).",
+    )
+    parser.add_argument(
         "-g", "--games-folder",
         metavar="PATH",
         help="Folder with ROM folders/files. Scans, searches, generates cheats for found games.",
@@ -260,6 +265,7 @@ def main() -> int:
             args.output_dir,
             args.extended,
             args.offline_only,
+            args.auto,
         )
         print(f"\n{'='*50}")
         print(f"Generated: {len(success)}")
@@ -281,11 +287,16 @@ def main() -> int:
     offline_results = search_offline_games(user_input)
 
     if offline_results:
-        chosen = prompt_offline_choice(offline_results)
+        if args.auto:
+            chosen = offline_results[0]
+            print(f"  Using: {chosen['name']} [{chosen['title_id']}]")
+        else:
+            chosen = prompt_offline_choice(offline_results)
+            if chosen:
+                print(f"\nSelected: {chosen['name']}")
+                print(f"Title ID: {chosen['title_id']}")
         if chosen:
             title_id = chosen["title_id"]
-            print(f"\nSelected: {chosen['name']}")
-            print(f"Title ID: {title_id}")
             if args.search:
                 return 0
             return run_generator(title_id, args.output_dir, args.extended)

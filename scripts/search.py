@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 from __future__ import annotations
 
 import argparse
@@ -47,7 +45,6 @@ def _import_tinfoil():
     
     tinfoil_search = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tinfoil_search)
-    print(f"Loaded tinfoil_search from {tinfoil_path}", file=sys.stderr)
 
 
 @dataclass
@@ -80,25 +77,11 @@ def parse_switchbrew_table(html: str) -> list[GameEntry]:
 
         title_id = title_id_match.group(1).upper()
         name = re.sub(r"<[^>]+>", "", cells[1]).strip()
-        if not name:
-            continue
+        region = re.sub(r"<[^>]+>", "", cells[2]).strip()
+        version_match = re.search(r"(\d+)", cells[3])
+        version_count = int(version_match.group(1)) if version_match else 0
 
-        region = ""
-        version_count = 0
-        for cell in cells[2:]:
-            cleaned = re.sub(r"<[^>]+>", "", cell).strip()
-            if cleaned in ("CHN", "EUR", "JPN", "KOR", "USA"):
-                region = cleaned
-            elif re.match(r"^[0-9]+( [0x[0-9a-f]+)*$", cleaned.replace(" ", "")):
-                parts = cleaned.split()
-                version_count = len(parts)
-
-        entries.append(GameEntry(
-            title_id=title_id,
-            name=name,
-            region=region,
-            version_count=version_count,
-        ))
+        entries.append(GameEntry(title_id=title_id, name=name, region=region, version_count=version_count))
 
     return entries
 
@@ -107,14 +90,13 @@ def load_cache() -> list[GameEntry] | None:
     if not CACHE_FILE.exists():
         return None
     try:
-        mtime = CACHE_FILE.stat().st_mtime
         import time
-        if (time.time() - mtime) > (CACHE_MAX_AGE_DAYS * 86400):
-            return None
-        data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
-        return [GameEntry(**item) for item in data]
+        if time.time() - CACHE_FILE.stat().st_mtime < CACHE_MAX_AGE_DAYS * 86400:
+            data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+            return [GameEntry(**d) for d in data]
     except Exception:
-        return None
+        pass
+    return None
 
 
 def save_cache(entries: list[GameEntry]) -> None:
@@ -187,43 +169,15 @@ def search_offline_games(query: str, limit: int = 10) -> list[dict]:
     return [g for _, g in scored[:limit]]
 
 
-def progressive_search(query: str, limit: int = 10) -> tuple[dict | None, list[dict]]:
-    """
-    If exact match fails, progressively shorten query by removing words.
-    Returns: (best_match, other_suggestions)
-    """
-    words = query.split()
-    if len(words) <= 1:
-        return None, []
-    
-    checked: set[str] = set()
-    suggestions: list[dict] = []
-    
-    for i in range(len(words), 0, -1):
-        short_query = " ".join(words[:i])
-        if not short_query or short_query in checked:
-            continue
-        checked.add(short_query)
-        
-        results = search_offline_games(short_query, limit=3)
-        for r in results:
-            if r["name"] not in [s["name"] for s in suggestions]:
-                suggestions.append(r)
-        
-        if suggestions:
-            break
-    
-    return suggestions[0] if suggestions else None, suggestions[1:]
-
-
-def find_title_id(game_name: str, offline_only: bool = False) -> tuple[str | None, str | None]:
+def find_title_id(game_name: str, offline_only: bool = False, auto: bool = False) -> tuple[str | None, str | None]:
     """
     Find title ID for a game name.
+    
     1. Exact offline match
     2. If not offline_only, try tinfoil online full query -> progressively shorter
     
-    Progressive: fullquery → remove last word → remove last word ...
-    No progressive on offline (just exact match).
+    If auto=False (default), prompts user when multiple offline matches.
+    If auto=True or offline_only, auto-selects best match.
     """
     offline_results = search_offline_games(game_name, limit=1)
     if offline_results:
@@ -243,140 +197,21 @@ def find_title_id(game_name: str, offline_only: bool = False) -> tuple[str | Non
             continue
         entries = tinfoil_search.search_tinfoil(short_query, limit=3)
         if entries:
-            return entries[0].title_id, entries[0].name
-    
-    return None, None
-
-    result = progressive_search(game_name)
-    if result[0]:
-        return result[0]["title_id"], result[0]["name"]
-
-    _import_tinfoil()
-    if tinfoil_search is None:
-        return None, None
-    
-    entries = tinfoil_search.search_tinfoil(game_name, limit=5)
-    if entries:
-        return entries[0].title_id, entries[0].name
-    
-    words = game_name.split()
-    for i in range(1, len(words)):
-        short_query = " ".join(words[:i])
-        if short_query:
-            entries = tinfoil_search.search_tinfoil(short_query, limit=3)
-            if entries:
+            if auto:
                 return entries[0].title_id, entries[0].name
-
-    return None, None
-
-
-def search_with_confirmation(query: str) -> tuple[str | None, str | None]:
-    """
-    Interactive search that prompts user to confirm.
-    
-    1. Try exact offline match
-    2. Try progressive offline (shorter queries)
-    3. Try tinfoil online + progressive
-    
-    Returns (title_id, game_name) after user confirms, or (None, None) if cancelled.
-    """
-    results = search_offline_games(query, limit=5)
-    if results:
-        print(f"\nOffline matches for '{query}':")
-        for i, r in enumerate(results, 1):
-            print(f"  [{i}] {r['name']} [{r['title_id']}]")
-        
-        chosen = _prompt_choice(results, allow_online=False)
-        if chosen:
-            return chosen["title_id"], chosen["name"]
-    
-    result = progressive_search(query)
-    if result[0]:
-        print(f"\nProgressive offline: {result[0]['name']} [{result[0]['title_id']}]")
-        if input("Use this? [y/n]: ").strip().lower() == "y":
-            return result[0]["title_id"], result[0]["name"]
-    
-    _import_tinfoil()
-    if tinfoil_search:
-        entries = tinfoil_search.search_tinfoil(query, limit=5)
-        if entries:
-            print(f"\nOnline (tinfoil) matches:")
-            for i, e in enumerate(entries, 1):
-                print(f"  [{i}] {e.name} [{e.title_id}]")
             
-            chosen = _prompt_choice_tinfoil(entries)
-            if chosen:
-                return chosen.title_id, chosen.name
-        
-        words = query.split()
-        for i in range(len(words), 0, -1):
-            short_query = " ".join(words[:i])
-            if not short_query:
-                continue
-            entries = tinfoil_search.search_tinfoil(short_query, limit=3)
-            if entries:
-                print(f"\nOnline progressive '{short_query}':")
-                for i, e in enumerate(entries, 1):
-                    print(f"  [{i}] {e.name} [{e.title_id}]")
-                chosen = _prompt_choice_tinfoil(entries)
-                if chosen:
-                    return chosen.title_id, chosen.name
-                break
+            print(f"  Found: {entries[0].name} [{entries[0].title_id}]")
+            if len(entries) > 1:
+                print("  Other matches:")
+                for j, e in enumerate(entries[1:], 1):
+                    print(f"    [{j}] {e.name} [{e.title_id}]")
+            
+            confirm = input("  Use this? [y/n]: ").strip().lower()
+            if confirm == "y":
+                return entries[0].title_id, entries[0].name
+            return None, None
     
     return None, None
-
-
-def _prompt_choice(results: list[dict], allow_online: bool = True) -> dict | None:
-    if not results:
-        return None
-    if len(results) == 1:
-        print(f"Using: {results[0]['name']} [{results[0]['title_id']}]")
-        if input("Confirm? [y/n]: ").strip().lower() == "y":
-            return results[0]
-        return None
-    
-    print("[q] quit")
-    if allow_online:
-        print("[o] search online")
-    
-    while True:
-        resp = input("Select: ").strip().lower()
-        if resp == "q":
-            return None
-        if allow_online and resp == "o":
-            return None
-        try:
-            idx = int(resp) - 1
-            if 0 <= idx < len(results):
-                return results[idx]
-        except ValueError:
-            pass
-
-
-def _prompt_choice_tinfoil(entries):
-    if not entries:
-        return None
-    if len(entries) == 1:
-        print(f"Using: {entries[0].name} [{entries[0].title_id}]")
-        if input("Confirm? [y/n]: ").strip().lower() == "y":
-            return entries[0]
-        return None
-    
-    print("[q] quit")
-    print("[s] skip online search")
-    
-    while True:
-        resp = input("Select: ").strip().lower()
-        if resp == "q" or resp == "s":
-            return None
-        try:
-            idx = int(resp) - 1
-            if 0 <= idx < len(entries):
-                return entries[idx]
-        except ValueError:
-            pass
-    
-    return None
 
 
 def normalize_for_match(value: str) -> str:
@@ -406,36 +241,31 @@ def fuzzy_score(query: str, name: str) -> int:
 
 
 def search_entries(entries: list[GameEntry], query: str, limit: int = 10) -> list[GameEntry]:
-    scored = []
-    for entry in entries:
-        score = fuzzy_score(query, entry.name)
-        if score > 0:
-            scored.append((score, entry))
+    if not entries:
+        return []
 
-    scored.sort(key=lambda x: (-x[0], x[1].name))
-    return [entry for _, entry in scored[:limit]]
+    scored = [(fuzzy_score(query, e.name), e) for e in entries if fuzzy_score(query, e.name) > 0]
+    scored.sort(key=lambda x: -x[0])
+    return [e for _, e in scored[:limit]]
 
 
 def prompt_choice(entries: list[GameEntry], skip_confirm: bool = False) -> GameEntry | None:
     if not entries:
         return None
-    if len(entries) == 1 and skip_confirm:
-        return entries[0]
     if len(entries) == 1:
-        print(f"Found: {entries[0].name} [{entries[0].title_id}]")
-        resp = input("Is this the correct game? [Y/n] ").strip().lower()
-        if resp in ("", "y", "yes"):
+        print(f"Offline: {entries[0].name} [{entries[0].title_id}]")
+        if skip_confirm:
             return entries[0]
-        return None
+        resp = input("Use this? [y/n]: ").strip().lower()
+        return entries[0] if resp == "y" else None
 
-    print("\nMultiple matches found:\n")
-    for i, entry in enumerate(entries, 1):
-        versions_note = f" ({entry.version_count} versions)" if entry.version_count > 1 else ""
-        print(f"  [{i}] {entry.name}{versions_note} [{entry.title_id}]")
-    print("  [q] quit")
+    print("\nOffline matches:\n")
+    for i, e in enumerate(entries, 1):
+        print(f"  [{i}] {e.name} [{e.title_id}]")
+    print("[q] quit")
 
     while True:
-        resp = input("\nSelect a number: ").strip().lower()
+        resp = input("Select: ").strip().lower()
         if resp == "q":
             return None
         try:
@@ -444,92 +274,117 @@ def prompt_choice(entries: list[GameEntry], skip_confirm: bool = False) -> GameE
                 return entries[idx]
         except ValueError:
             pass
-        print("Please enter a number from the list, or 'q' to quit.")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Search Switch titles by name and optionally generate cheats.",
+        description="Generate Switch emulator cheats from a title ID or game name.",
     )
     parser.add_argument(
-        "query",
+        "input",
         nargs="?",
-        help="Game name to search for (case-insensitive, partial match).",
-    )
-    parser.add_argument(
-        "--no-cache",
-        action="store_true",
-        help="Force-refresh the title cache instead of using cached data.",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=10,
-        help="Maximum number of search results to show. Default: %(default)s",
-    )
-    parser.add_argument(
-        "-y", "--yes",
-        action="store_true",
-        help="Skip confirmation when exactly one match is found.",
-    )
-    parser.add_argument(
-        "-g", "--generate",
-        action="store_true",
-        help="After selection, immediately run generator.py with the chosen title ID.",
+        help="Switch title ID or game name",
     )
     parser.add_argument(
         "-o", "--output-dir",
         default="cheats",
-        help="Output directory for generated cheats (used with --generate). Default: %(default)s",
+        help="Output directory. Default: cheats",
+    )
+    parser.add_argument(
+        "-e", "--extended",
+        action="store_true",
+        help="Enable extended mode to fill missing build versions.",
+    )
+    parser.add_argument(
+        "--offline-only",
+        action="store_true",
+        help="Only search the offline games.json, skip online search.",
+    )
+    parser.add_argument(
+        "-s", "--search",
+        action="store_true",
+        help="Only search and display title ID without generating cheats.",
+    )
+    parser.add_argument(
+        "-a", "--auto",
+        action="store_true",
+        help="Auto-select best match without prompting (for batch scripts).",
+    )
+    parser.add_argument(
+        "-g", "--games-folder",
+        metavar="PATH",
+        help="Folder with ROM folders/files. Scans, searches, generates cheats for found games.",
     )
     return parser
 
 
 def main() -> int:
-    import subprocess
-    import os
-
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.no_cache and CACHE_FILE.exists():
-        CACHE_FILE.unlink()
-
-    entries = fetch_entries()
-
-    if not args.query:
-        print(f"Loaded {len(entries)} titles from cache (or network).")
-        print("Usage: python3 search.py <game name>")
-        print(f"Cache file: {CACHE_FILE}")
+    if args.games_folder:
+        from main import process_games_folder
+        success, skipped = process_games_folder(
+            args.games_folder,
+            args.output_dir,
+            args.extended,
+            args.offline_only,
+            args.auto,
+        )
+        print(f"\n{'='*50}")
+        print(f"Generated: {len(success)}")
+        print(f"Skipped: {len(skipped)}")
+        print(f"\nOutput folder: {args.output_dir}/")
+        print(f"\nCopy '{args.output_dir}' folder to your emulator's mod/cheat directory.")
         return 0
 
-    results = search_entries(entries, args.query, args.limit)
+    user_input = args.input.strip()
 
-    if not results:
-        print(f"No matches found for: {args.query}", file=sys.stderr)
+    if is_title_id(user_input):
+        title_id = user_input.upper()
+        print(f"Title ID: {title_id}")
+        if args.search:
+            return 0
+        from main import run_generator
+        return run_generator(title_id, args.output_dir, args.extended)
+
+    print(f'Searching for: "{user_input}"')
+    from main import run_generator
+    offline_results = search_offline_games(user_input)
+
+    if offline_results:
+        chosen = prompt_choice([GameEntry(**r) for r in offline_results], skip_confirm=args.auto)
+        if chosen:
+            title_id = chosen.title_id
+            print(f"\nSelected: {chosen.name}")
+            print(f"Title ID: {title_id}")
+            if args.search:
+                return 0
+            return run_generator(title_id, args.output_dir, args.extended)
+    else:
+        print("No offline matches found.")
+
+    if args.offline_only:
+        print("\nNo match in offline database. Provide the title ID directly:")
+        print(f"  python3 main.py <TITLE_ID>")
         return 1
 
-    chosen = prompt_choice(results, args.yes)
-    if not chosen:
-        print("No game selected.", file=sys.stderr)
-        return 1
+    print("\nSearching online...")
+    from main import is_title_id
+    result = find_title_id(user_input, auto=args.auto)
 
-    print(f"\nSelected: {chosen.name}")
-    print(f"Title ID: {chosen.title_id}")
+    if result[0]:
+        title_id = result[0]
+        print(f"Found online: {title_id}")
+        print(f"Game: {result[1]}")
+        if args.search:
+            return 0
+        return run_generator(title_id, args.output_dir, args.extended)
 
-    if args.generate:
-        print(f"\nGenerating cheats to {args.output_dir} ...", file=sys.stderr)
-        script_dir = Path(__file__).parent.resolve()
-        result = subprocess.run(
-            [sys.executable, "generator.py", chosen.title_id, "-o", args.output_dir],
-            cwd=script_dir,
-            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
-        )
-        return result.returncode
-
-    print(f"\nTo generate cheats, run:")
-    print(f"  python3 generator.py {chosen.title_id}")
-    return 0
+    print("\nNo match found.")
+    print(f"\nProvide the title ID directly:")
+    print(f"  python3 main.py <TITLE_ID>")
+    return 1
 
 
 if __name__ == "__main__":
