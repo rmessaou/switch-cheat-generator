@@ -123,7 +123,7 @@ def process_games_folder(
 
         cmd = [sys.executable, str(GENERATOR_SCRIPT), title_id, "-o", output_dir]
         if extended:
-            cmd.append("-e")
+            cmd.append("--extended")
         result = subprocess.run(
             cmd,
             cwd=SCRIPT_DIR,
