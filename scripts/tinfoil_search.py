@@ -75,25 +75,29 @@ def parse_tinfoil_response(json_data: dict) -> list[TinfoilEntry]:
 
 
 def fetch_tinfoil_search(query: str, limit: int = 10) -> list[TinfoilEntry]:
+    """
+    Search tinfoil.io by fetching ALL titles and filtering locally.
+    Note: The API doesn't support search param - browser filters client-side.
+    """
     if not query or not query.strip():
         return []
     
-    query = query.strip()
-    params = {
-        "rating_content": "",
-        "language": "",
-        "category": "",
-        "region": "us",
-        "rating": "0",
-        "search": query,
-    }
-    url = f"{TINFOIL_API_URL}?{urllib.parse.urlencode(params)}"
+    query_norm = query.strip().lower()
+    entries = fetch_all_tinfoil_titles()
     
-    json_data = _make_request(url)
-    if json_data is None:
-        return []
+    def score(name: str) -> int:
+        name_lower = name.lower()
+        if query_norm == name_lower:
+            return 1000
+        if name_lower.startswith(query_norm):
+            return 800 + (len(name_lower) - len(query_norm))
+        if query_norm in name_lower:
+            return 600 + (len(name_lower) - len(query_norm))
+        return 0
     
-    return parse_tinfoil_response(json_data)[:limit]
+    scored = [(score(e.name), e) for e in entries if score(e.name) > 0]
+    scored.sort(key=lambda x: -x[0])
+    return [e for _, e in scored[:limit]]
 
 
 def search_tinfoil(query: str, limit: int = 10) -> list[TinfoilEntry]:
@@ -147,9 +151,10 @@ def find_title_id_online(game_name: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def get_all_tinfoil_titles(limit: int = 100) -> list[TinfoilEntry]:
+def fetch_all_tinfoil_titles() -> list[TinfoilEntry]:
     """
-    Fetch all titles from tinfoil (useful for building offline database).
+    Fetch ALL titles from tinfoil.io. The API returns all titles at once,
+    filter is done client-side in browser. We fetch all and filter locally.
     """
     params = {
         "rating_content": "",
@@ -157,6 +162,7 @@ def get_all_tinfoil_titles(limit: int = 100) -> list[TinfoilEntry]:
         "category": "",
         "region": "us",
         "rating": "0",
+        "_": str(int(time.time() * 1000)),
     }
     url = f"{TINFOIL_API_URL}?{urllib.parse.urlencode(params)}"
     
@@ -164,7 +170,7 @@ def get_all_tinfoil_titles(limit: int = 100) -> list[TinfoilEntry]:
     if json_data is None:
         return []
     
-    return parse_tinfoil_response(json_data)[:limit]
+    return parse_tinfoil_response(json_data)
 
 
 if __name__ == "__main__":
