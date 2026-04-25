@@ -1,4 +1,4 @@
-# switch_emu_cheat_codes
+# switch-cheat-generator
 
 Generate Switch emulator cheat files from tinfoil.io.
 
@@ -59,6 +59,17 @@ python3 main.py --games-folder ROMs -o my_cheats
 python3 main.py 0100152000022000 -e
 ```
 
+## --extended Mode
+
+By default, cheats are written only for the builds that exist on tinfoil.io. But some games have cheats written for an older version that still work on newer versions.
+
+With `--extended`, the generator copies each cheat to **all known build IDs** for that title. This ensures cheats work even if you're on a version not listed on tinfoil.
+
+```bash
+# Example: Mario Kart 8 Deluxe v1.7.1 cheats also work on v1.7.2, v2.0.0, etc.
+python3 main.py 0100152000022000 -e
+```
+
 ## Output Structure
 
 ```
@@ -66,6 +77,12 @@ cheats/<game_name>/<title_id>/<cheat_name>/Cheats/<build_id>.txt
 ```
 
 Each `.txt` contains one cheat block. Cheats split by name for easy enable/disable.
+
+Example:
+```
+cheats/Mario Kart 8 Deluxe/0100152000022000/Infinite Coins/Cheats/FE1B230800D4933C.txt
+cheats/Mario Kart 8 Deluxe/0100152000022000/Infinite Coins/Cheats/068AE4992C45B028.txt
+```
 
 ## Offline Database
 
