@@ -32,20 +32,22 @@ def _import_tinfoil():
     if not tinfoil_path.exists():
         tinfoil_path = SCRIPT_DIR.parent / "scripts" / "tinfoil_search.py"
     
-    if tinfoil_path.exists():
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("tinfoil_search", tinfoil_path)
-        if spec and spec.loader:
-            tinfoil_search = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(tinfoil_search)
-
-
-SWITCHBREW_URL = "https://switchbrew.org/w/index.php?title=Title_list/Games&mobileaction=toggle_view_desktop"
-SCRIPT_DIR = Path(__file__).parent.resolve()
-DATA_DIR = SCRIPT_DIR.parent / "data"
-CACHE_FILE = DATA_DIR / ".switchbrew_title_cache.json"
-GAMES_JSON = DATA_DIR / "games.json"
-CACHE_MAX_AGE_DAYS = 7
+    if not tinfoil_path.exists():
+        print(f"Warning: tinfoil_search.py not found", file=sys.stderr)
+        return
+    
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("tinfoil_search", tinfoil_path)
+    if spec is None:
+        print(f"Warning: spec is None for {tinfoil_path}", file=sys.stderr)
+        return
+    if spec.loader is None:
+        print(f"Warning: spec.loader is None for {tinfoil_path}", file=sys.stderr)
+        return
+    
+    tinfoil_search = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tinfoil_search)
+    print(f"Loaded tinfoil_search from {tinfoil_path}", file=sys.stderr)
 
 
 @dataclass

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import re
 import sys
@@ -9,7 +10,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
 from pathlib import Path
 
 TINFOIL_API_URL = "https://tinfoil.media/Title/ApiJson/"
@@ -46,10 +46,13 @@ def _make_request(url: str) -> dict | None:
         return None
 
 
-@dataclass
 class TinfoilEntry:
-    title_id: str
-    name: str
+    __slots__ = ("title_id", "name")
+    def __init__(self, title_id: str, name: str):
+        self.title_id = title_id
+        self.name = name
+    def __repr__(self):
+        return f"TinfoilEntry({self.title_id}, {self.name!r})"
 
 
 def parse_tinfoil_response(json_data: dict) -> list[TinfoilEntry]:
@@ -68,7 +71,6 @@ def parse_tinfoil_response(json_data: dict) -> list[TinfoilEntry]:
         else:
             name = name_html
         
-        import html
         name = html.unescape(name)
         
         if title_id and len(title_id) == 16:
