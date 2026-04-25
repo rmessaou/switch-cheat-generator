@@ -1,104 +1,88 @@
 # switch_emu_cheat_codes
 
-Generate Switch emulator cheat files from a Tinfoil title page.
+Generate Switch emulator cheat files from tinfoil.io.
 
-The generated folder structure is compatible with Yuzu, Citron, Sudachi, and other Switch emulators or tools that resolve cheats by Build ID using the same general layout.
+The generated folder structure is compatible with Yuzu, Sudachi, Ryujinx, and other Switch emulators.
 
 ## Quick Start
 
-The main entry point is `main.py`. It can accept either a title ID or a game name:
-
 ```bash
-# With title ID
+# By title ID
 python3 main.py 0100152000022000
 
-# With game name (searches offline then online)
-python3 main.py "mario kart"
+# By game name (searches offline first, then online)
+python3 main.py "Mario Kart 8 Deluxe"
 
-# Search only, no generation
-python3 main.py "mario kart" -s
+# Batch process a ROMs folder
+python3 main.py --games-folder ROMs -o cheats
 ```
 
-## Usage
-
-The main script (`main.py`) accepts:
-
-- A Switch title ID (16 hex characters)
-- A game name (searches offline database, falls back to online)
-
-Find the title ID in your emulator's game info/properties, or search manually at `https://tinfoil.io/Title/`.
-
-### Options
+## main.py Options
 
 ```bash
 python3 main.py <input> [options]
 
-input                   Switch title ID or game name
--o, --output-dir DIR    Output directory (default: cheats)
--e, --extended        Fill missing build versions
---offline-only        Skip online search
--s, --search         Only search, don't generate
+# Input options (one required):
+  title_id            Switch title ID (16 hex chars) - e.g., 0100152000022000
+  game_name          Game name to search
+
+# Output options:
+  -o, --output-dir DIR    Output directory (default: cheats)
+
+# Search options:
+  --offline-only        Only search offline database, skip online
+  -s, --search       Search only, don't generate cheats
+
+# Generator options:
+  -e, --extended     Fill missing build versions
+
+# Batch options:
+  --games-folder DIR   Process all ROMs in folder
 ```
 
-### Examples
+## Examples
 
 ```bash
 # Generate cheats by title ID
 python3 main.py 0100152000022000
 
-# Search by name and generate
-python3 main.py "mario kart"
+# Search by name
+python3 main.py "Mario Kart"
 
 # Search only (find title ID)
-python3 main.py "mario kart" -s
+python3 main.py "Mario Kart" -s
+
+# Batch process ROMs folder
+python3 main.py --games-folder ROMs -o my_cheats
 
 # Extended mode (fill all builds)
 python3 main.py 0100152000022000 -e
-
-# Custom output folder
-python3 main.py 0100152000022000 -o my_cheats
 ```
 
-## Output
+## Output Structure
 
-The script creates:
-
-```text
+```
 cheats/<game_name>/<title_id>/<cheat_name>/Cheats/<build_id>.txt
 ```
 
-Each `.txt` contains only that cheat's block. Cheats are split by name for easier enable/disable.
-
-## Extended Mode
-
-With `--extended`, if a cheat exists for at least one mapped version, the script also writes that cheat to every known build ID for the title. This fills gaps when Tinfoil under-lists versions.
+Each `.txt` contains one cheat block. Cheats split by name for easy enable/disable.
 
 ## Offline Database
 
-The `data/games.json` contains ~2,300 game titles for offline searching. Search is fast without network.
+`data/games.json` contains ~18,000 game titles from tinfoil.io for offline searching.
 
-To update the offline database:
+Search order:
+1. Embedded Title ID in filename (e.g., `Game[0100152000022000].nsp`)
+2. Offline exact match in games.json
+3. Tinfoil online (progressively shorter query if needed)
 
-```bash
-python3 -c "import search; search.fetch_entries()"
-```
+## Requirements
 
-## Files
-
-```
-.
-├── main.py              # Main entry point
-├── README.md           # This file
-├── cheats/            # Generated cheats output
-├── data/
-│   └── games.json     # Offline title database
-└── scripts/
-    ├── generator.py  # Core generator
-    └── search.py    # Online search helper
-```
+- Python 3.10+
+- No external packages required
 
 ## Notes
 
-- Only Python standard library required.
-- Folder names are sanitized for Windows compatibility.
-- When no cheats exist, check manually at `https://tinfoil.io/Title/<TITLE_ID>`
+- Folder names sanitized for Windows
+- When no cheats exist, check manually at https://tinfoil.io/Title/<TITLE_ID>
+- ROM naming tips: include Title ID in brackets `[0100...]` for automatic detection
