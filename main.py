@@ -31,6 +31,94 @@ def load_offline_games() -> list[dict]:
         return []
 
 
+def extract_game_name_from_path(path: Path) -> str | None:
+    name = path.stem
+    name = re.sub(r"\s*\(\d+)\s*$", "", name)
+    name = re.sub(r"\s*\[\w-]+\s*$", "", name)
+    name = name.replace("_", " ").replace("-", " ").strip()
+    name = re.sub(r"\s+", " ", name).strip()
+    if name and len(name) > 2:
+        return name
+    return None
+
+
+def scan_roms_folder(folder_path: str) -> list[str]:
+    folder = Path(folder_path)
+    if not folder.exists() or not folder.is_dir():
+        return []
+
+    names: list[str] = []
+    for item in folder.iterdir():
+        if item.is_dir():
+            name = extract_game_name_from_path(item)
+            if name:
+                names.append(name)
+        elif item.is_file() and item.suffix.lower() in (".nsp", ".xci", ".nro", ".nsz", ".xcz"):
+            name = extract_game_name_from_path(item)
+            if name:
+                names.append(name)
+
+    return names
+
+
+def find_title_id_for_game(game_name: str, offline_only: bool = False) -> tuple[str | None, str | None]:
+    offline_results = search_offline_games(game_name, limit=1)
+    if offline_results:
+        return offline_results[0]["title_id"], offline_results[0]["name"]
+
+    if offline_only:
+        return None, None
+
+    found_id = online_search(game_name)
+    if found_id:
+        return found_id, game_name
+
+    return None, None
+
+
+def process_games_folder(
+    folder_path: str,
+    output_dir: str,
+    extended: bool,
+    offline_only: bool = False,
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, str]]]:
+    print(f"Scanning folder: {folder_path}")
+    game_names = scan_roms_folder(folder_path)
+    if not game_names:
+        print("No ROM folders or files found.")
+        return [], []
+
+    print(f"Found {len(game_names)} items. Searching and generating...")
+
+    success: list[tuple[str, str, str]] = []  # (title_id, game_name, output_folder)
+    skipped: list[tuple[str, str]] = []  # (game_name, reason)
+
+    for i, name in enumerate(game_names, 1):
+        print(f"[{i}/{len(game_names)}] {name} ...", end=" ", flush=True)
+
+        title_id, found_name = find_title_id_for_game(name, offline_only)
+
+        if not title_id:
+            print(f"skip (not found)")
+            skipped.append((name, "not found"))
+            continue
+
+        result = subprocess.run(
+            [sys.executable, str(GENERATOR_SCRIPT), title_id, "-o", output_dir, "-e" if extended else ""],
+            cwd=SCRIPT_DIR,
+            capture_output=True,
+        )
+
+        if result.returncode == 0 and "Files written:" in result.stdout.decode():
+            print(f"OK ({title_id})")
+            success.append((title_id, found_name or name, output_dir))
+        else:
+            print(f"skip (no cheats)")
+            skipped.append((name, "no cheats"))
+
+    return success, skipped
+
+
 def search_offline_games(query: str, limit: int = 10) -> list[dict]:
     games = load_offline_games()
     query_norm = re.sub(r"[^a-z0-9]", "", query.lower())
@@ -134,7 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "input",
         nargs="?",
-        help="Switch title ID (16 hex chars) or game name to search for.",
+        help="Switch title ID (16 hex chars), game name, or folder path.",
     )
     parser.add_argument(
         "-o", "--output-dir",
@@ -156,12 +244,31 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Only search and display title ID without generating cheats.",
     )
+    parser.add_argument(
+        "-g", "--games-folder",
+        metavar="PATH",
+        help="Folder with ROM folders/files. Scans, searches, generates cheats for found games.",
+    )
     return parser
 
 
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.games_folder:
+        success, skipped = process_games_folder(
+            args.games_folder,
+            args.output_dir,
+            args.extended,
+            args.offline_only,
+        )
+        print(f"\n{'='*50}")
+        print(f"Generated: {len(success)}")
+        print(f"Skipped: {len(skipped)}")
+        print(f"\nOutput folder: {args.output_dir}/")
+        print(f"\nCopy '{args.output_dir}' folder to your emulator's mod/cheat directory.")
+        return 0
 
     user_input = args.input.strip()
 
