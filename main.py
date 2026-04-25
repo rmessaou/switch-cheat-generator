@@ -31,42 +31,59 @@ def load_offline_games() -> list[dict]:
         return []
 
 
-def extract_game_name_from_path(path: Path) -> str | None:
+def extract_game_name_from_path(path: Path) -> tuple[str | None, str | None]:
+    import re
     name = path.stem
     
-    junk_suffixes = [
-        " [XCI]", " [NSZ]", " [NSP]", " [NRO]", " [NSZ]", " [XCZ]",
-        " (Base)", " (Update)", " (DLC)", " ( DLC)",
-    ]
-    for suffix in junk_suffixes:
-        if name.endswith(suffix):
-            name = name[:-len(suffix)]
+    title_id_match = re.search(r"\[([0-9A-Fa-f]{16})\]", name)
+    if title_id_match:
+        return title_id_match.group(1).upper(), name
     
-    name = re.sub(r" v\d+\.\d+.*$", "", name)
-    name = name.replace("_", " ").replace("-", " ").strip()
+    junk_patterns = [
+        r"\s*\[\s*[Xx][Cc][Ii]\s*\]",
+        r"\s*\[\s*[Nn][Ss][Zz]\s*\]",
+        r"\s*\[\s*[Nn][Ss][Pp]\s*\]",
+        r"\s*\[\s*[Uu][Ss]\s*\]",
+        r"\s*\[\s*[Ee][Uu]\s*\]",
+        r"\s*\[\s*[Jj][Pp]\s*\]",
+        r"\s*\[\s*[Kk][Oo][Rr]\s*\]",
+        r"\s*\[\s*[Cc][Hh][Nn]\s*\]",
+        r"\s*[\[0-9a-f]{16}\]",
+        r"\s+v[0-9]+(\.[0-9]+)*\s*",
+        r"\s+--\s*v[0-9]+\s*-",
+        r"\s+_v[0-9]+\s*",
+    ]
+    for pattern in junk_patterns:
+        try:
+            name = re.sub(pattern, " ", name, flags=re.IGNORECASE)
+        except re.error:
+            pass
+    
+    name = name.replace("_", " ").replace("-", " ")
     name = re.sub(r"\s+", " ", name).strip()
+    
     if name and len(name) > 2:
-        return name
-    return None
+        return None, name
+    return None, None
 
 
-def scan_roms_folder(folder_path: str) -> list[str]:
+def scan_roms_folder(folder_path: str) -> list[tuple[str | None, str]]:
     folder = Path(folder_path)
     if not folder.exists() or not folder.is_dir():
         return []
 
-    names: list[str] = []
+    games: list[tuple[str | None, str]] = []
     for item in folder.iterdir():
         if item.is_dir():
-            name = extract_game_name_from_path(item)
+            title_id, name = extract_game_name_from_path(item)
             if name:
-                names.append(name)
+                games.append((title_id, name))
         elif item.is_file() and item.suffix.lower() in (".nsp", ".xci", ".nro", ".nsz", ".xcz"):
-            name = extract_game_name_from_path(item)
+            title_id, name = extract_game_name_from_path(item)
             if name:
-                names.append(name)
+                games.append((title_id, name))
 
-    return names
+    return games
 
 
 def find_title_id_for_game(game_name: str, offline_only: bool = False) -> tuple[str | None, str | None]:
@@ -91,20 +108,22 @@ def process_games_folder(
     offline_only: bool = False,
 ) -> tuple[list[tuple[str, str, str]], list[tuple[str, str]]]:
     print(f"Scanning folder: {folder_path}")
-    game_names = scan_roms_folder(folder_path)
-    if not game_names:
+    games = scan_roms_folder(folder_path)
+    if not games:
         print("No ROM folders or files found.")
         return [], []
 
-    print(f"Found {len(game_names)} items. Searching and generating...")
+    print(f"Found {len(games)} items. Searching and generating...")
 
     success: list[tuple[str, str, str]] = []  # (title_id, game_name, output_folder)
     skipped: list[tuple[str, str]] = []  # (game_name, reason)
 
-    for i, name in enumerate(game_names, 1):
-        print(f"[{i}/{len(game_names)}] {name} ...", end=" ", flush=True)
+    for i, (title_id, name) in enumerate(games, 1):
+        print(f"[{i}/{len(games)}] {name} ...", end=" ", flush=True)
 
-        title_id, found_name = find_title_id_for_game(name, offline_only)
+        if not title_id:
+            result = find_title_id_for_game(name, offline_only)
+            title_id, found_name = result[0], result[1]
 
         if not title_id:
             print(f"skip (not found)")
@@ -126,7 +145,7 @@ def process_games_folder(
                 count_line = [l for l in output.splitlines() if "Files written:" in l]
                 if count_line and not count_line[0].startswith("Files written: 0"):
                     print(f"OK ({title_id})")
-                    success.append((title_id, found_name or name, output_dir))
+                    success.append((title_id, name, output_dir))
                     continue
         print(f"skip (no cheats)")
         skipped.append((name, "no cheats" if result.returncode != 0 else "failed"))
