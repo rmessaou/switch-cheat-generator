@@ -31,6 +31,35 @@ def load_offline_games() -> list[dict]:
         return []
 
 
+def progressive_search(query: str, limit: int = 10) -> tuple[dict | None, list[dict]]:
+    """
+    If exact match fails, progressively shorten query by removing words.
+    Returns: (best_match, other_suggestions)
+    """
+    words = query.split()
+    if len(words) <= 1:
+        return None, []
+    
+    checked: set[str] = set()
+    suggestions: list[dict] = []
+    
+    for i in range(len(words), 0, -1):
+        short_query = " ".join(words[:i])
+        if not short_query or short_query in checked:
+            continue
+        checked.add(short_query)
+        
+        results = search_offline_games(short_query, limit=3)
+        for r in results:
+            if r["name"] not in [s["name"] for s in suggestions]:
+                suggestions.append(r)
+        
+        if suggestions:
+            break
+    
+    return suggestions[0] if suggestions else None, suggestions[1:]
+
+
 def extract_game_name_from_path(path: Path) -> tuple[str | None, str | None]:
     import re
     name = path.stem
@@ -99,13 +128,22 @@ def find_title_id_for_game(game_name: str, offline_only: bool = False) -> tuple[
     offline_results = search_offline_games(game_name, limit=1)
     if offline_results:
         return offline_results[0]["title_id"], offline_results[0]["name"]
-
+    
     if offline_only:
+        result = progressive_search(game_name)
+        if result[0]:
+            print(f"  Warning: using closest match: {result[0]['name']}")
+            return result[0]["title_id"], result[0]["name"]
         return None, None
 
     found_id = online_search(game_name)
     if found_id:
         return found_id, game_name
+
+    result = progressive_search(game_name)
+    if result[0]:
+        print(f"  Warning: using closest match: {result[0]['name']}")
+        return result[0]["title_id"], result[0]["name"]
 
     return None, None
 
@@ -164,6 +202,10 @@ def process_games_folder(
 
 def search_offline_games(query: str, limit: int = 10) -> list[dict]:
     games = load_offline_games()
+    return search_offline_games_with_list(games, query, limit)
+
+
+def search_offline_games_with_list(games: list[dict], query: str, limit: int = 10) -> list[dict]:
     query_norm = re.sub(r"[^a-z0-9]", "", query.lower())
 
     def score(game_name: str) -> int:
