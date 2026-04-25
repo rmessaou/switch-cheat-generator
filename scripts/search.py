@@ -219,21 +219,33 @@ def progressive_search(query: str, limit: int = 10) -> tuple[dict | None, list[d
 def find_title_id(game_name: str, offline_only: bool = False) -> tuple[str | None, str | None]:
     """
     Find title ID for a game name.
-    1. Try exact offline match
-    2. Try progressive offline search  
-    3. If not offline_only, try tinfoil online
+    1. Exact offline match
+    2. If not offline_only, try tinfoil online full query -> progressively shorter
     
-    Returns (title_id, game_name).
+    Progressive: fullquery → remove last word → remove last word ...
+    No progressive on offline (just exact match).
     """
     offline_results = search_offline_games(game_name, limit=1)
     if offline_results:
         return offline_results[0]["title_id"], offline_results[0]["name"]
     
     if offline_only:
-        result = progressive_search(game_name)
-        if result[0]:
-            return result[0]["title_id"], result[0]["name"]
         return None, None
+
+    _import_tinfoil()
+    if tinfoil_search is None:
+        return None, None
+    
+    words = game_name.split()
+    for i in range(len(words), 0, -1):
+        short_query = " ".join(words[:i])
+        if not short_query:
+            continue
+        entries = tinfoil_search.search_tinfoil(short_query, limit=3)
+        if entries:
+            return entries[0].title_id, entries[0].name
+    
+    return None, None
 
     result = progressive_search(game_name)
     if result[0]:
